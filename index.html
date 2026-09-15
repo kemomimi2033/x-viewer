@@ -87,14 +87,11 @@
     </div>
 
     <div class="group">
-      <h2>导出 OBJ</h2>
+      <h2>导出</h2>
       <div class="row">
-        <button class="btn" id="export-obj">导出为 .obj</button>
+        <button class="btn" id="export-obj">导出为 ZIP (OBJ+MTL)</button>
       </div>
-      <div class="row">
-        <button class="btn secondary" id="export-mtl-only" disabled>导出 .mtl (随 OBJ)</button>
-      </div>
-      <div class="file-tag" id="export-status">点击导出会同时下载 .obj 与 .mtl</div>
+      <div class="file-tag" id="export-status">导出的 ZIP 内含 .obj、.mtl 及贴图文件</div>
     </div>
 
     <div class="group">
@@ -118,6 +115,7 @@
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script type="importmap">
 {
   "imports": {
@@ -653,6 +651,7 @@ let currentModel = null;     // THREE.Group
 let currentParsed = null;    // parsed object
 let bboxHelper = null;
 const textureMap = new Map(); // 文件名小写 -> Texture
+const textureDataURLs = new Map(); // 文件名小写 -> dataURL (用于打包进 ZIP)
 // 撤销/重做历史栈
 const history = [];
 let histIdx = -1;
@@ -903,6 +902,8 @@ function loadTextures(files) {
     const reader = new FileReader();
     reader.onload = (e) => {
       const url = e.target.result;
+      const lowerName = file.name.toLowerCase();
+      textureDataURLs.set(lowerName, url); // 保留 dataURL 用于打包
       const loader = new THREE.TextureLoader();
       loader.load(url, (tex) => {
         tex.flipY = false; // .x UV 已处理 V 翻转
@@ -981,20 +982,74 @@ document.getElementById('amb').addEventListener('input', (e) => {
   document.getElementById('amb-val').textContent = parseFloat(e.target.value).toFixed(2);
 });
 
-document.getElementById('export-obj').addEventListener('click', () => {
+/* ---------------- dataURL -> Uint8Array (用于把贴图写入 ZIP) ---------------- */
+function dataURLToUint8Array(dataURL) {
+  const comma = dataURL.indexOf(',');
+  const base64 = dataURL.slice(comma + 1);
+  const bin = atob(base64);
+  const len = bin.length;
+  const arr = new Uint8Array(len);
+  for (let i = 0; i < len; i++) arr[i] = bin.charCodeAt(i);
+  return arr;
+}
+
+document.getElementById('export-obj').addEventListener('click', async () => {
   if (!currentParsed) {
     showToast('请先加载 .x 模型');
     return;
   }
-  const { obj, mtl } = exportOBJ(currentParsed);
-  // 先下载 obj, 延迟 500ms 再下载 mtl, 避免移动端浏览器只执行最后一次下载
-  downloadText('model.obj', obj);
-  if (currentParsed.materials.length > 0) {
-    setTimeout(() => downloadText('model.mtl', mtl), 500);
+  const statusEl = document.getElementById('export-status');
+  statusEl.textContent = '正在打包 ZIP...';
+
+  try {
+    const { obj, mtl } = exportOBJ(currentParsed);
+    const zip = new JSZip();
+    zip.file('model.obj', obj);
+
+    const hasMtl = currentParsed.materials.length > 0;
+    if (hasMtl) {
+      zip.file('model.mtl', mtl);
+
+      // 把 MTL 中引用到且已加载的贴图文件一并打包
+      const usedTexNames = new Set();
+      currentParsed.materials.forEach(mat => {
+        if (mat.textureFile) {
+          const tname = mat.textureFile.split(/[\\\/]/).pop();
+          usedTexNames.add(tname);
+        }
+      });
+      usedTexNames.forEach(tname => {
+        const dataURL = textureDataURLs.get(tname.toLowerCase());
+        if (dataURL) {
+          try {
+            zip.file(tname, dataURLToUint8Array(dataURL));
+          } catch (e) {
+            console.warn('贴图打包失败:', tname, e);
+          }
+        }
+      });
+    }
+
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'model.zip';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+
+    const vCount = currentParsed.meshes.reduce((s, m) => s + m.vertices.length, 0);
+    const fCount = currentParsed.meshes.reduce((s, m) => s + m.faces.length, 0);
+    statusEl.textContent = `已导出 model.zip (${vCount} v, ${fCount} f)`;
+    showToast('ZIP 已导出');
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = '导出失败: ' + err.message;
+    showToast('导出失败: ' + err.message, 4000);
   }
-  document.getElementById('export-status').textContent =
-    `已导出 (${currentParsed.meshes.reduce((s,m)=>s+m.vertices.length,0)} v, ${currentParsed.meshes.reduce((s,m)=>s+m.faces.length,0)} f)`;
-  showToast('OBJ 已导出');
 });
 
 /* ---------------- 拖拽支持 ---------------- */
