@@ -1,0 +1,1022 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>.x 模型预览器</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background:#1a1d23; color:#e0e0e0; overflow:hidden; }
+  #app { display:flex; height:100vh; }
+  #sidebar {
+    width:340px; min-width:340px; background:#23262d; padding:16px; overflow-y:auto;
+    border-right:1px solid #3a3f4b; display:flex; flex-direction:column; gap:14px;
+  }
+  #sidebar h1 { font-size:16px; font-weight:600; color:#fff; }
+  .group { background:#1f2228; border:1px solid #2e333d; border-radius:6px; padding:12px; }
+  .group h2 { font-size:12px; font-weight:600; color:#8b95a5; text-transform:uppercase; letter-spacing:.5px; margin-bottom:8px; }
+  .row { display:flex; flex-direction:column; gap:6px; margin-bottom:10px; }
+  .row:last-child { margin-bottom:0; }
+  label { font-size:12px; color:#b0b8c4; }
+  .btn {
+    background:#3b82f6; color:#fff; border:none; padding:8px 14px; border-radius:4px;
+    font-size:13px; cursor:pointer; transition:background .15s;
+  }
+  .btn:hover { background:#2d6fda; }
+  .btn.secondary { background:#3a3f4b; }
+  .btn.secondary:hover { background:#4a505c; }
+  .btn:disabled { background:#2a2e37; color:#5a606a; cursor:not-allowed; }
+  .btn-row { display:flex; gap:8px; flex-wrap:wrap; }
+  .file-input { display:none; }
+  .file-tag { font-size:11px; color:#7a8290; word-break:break-all; margin-top:2px; }
+  .stat { display:flex; justify-content:space-between; font-size:12px; padding:3px 0; border-bottom:1px solid #2a2e37; }
+  .stat:last-child { border-bottom:none; }
+  .stat .k { color:#8b95a5; }
+  .stat .v { color:#e0e0e0; font-weight:500; }
+  #viewport { flex:1; position:relative; }
+  #viewport canvas { display:block; width:100%; height:100%; }
+  #dropzone {
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:#5a606a; font-size:14px; pointer-events:none; text-align:center; flex-direction:column; gap:8px;
+  }
+  #toast {
+    position:absolute; top:12px; left:50%; transform:translateX(-50%);
+    background:#2d6fda; color:#fff; padding:8px 16px; border-radius:4px; font-size:13px;
+    opacity:0; transition:opacity .3s; pointer-events:none; z-index:10;
+  }
+  #toast.show { opacity:1; }
+  .toggle-row { display:flex; align-items:center; gap:8px; font-size:12px; color:#b0b8c4; }
+  .toggle-row input { margin:0; }
+  input[type=range] { width:100%; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar">
+    <h1>.x 模型预览器</h1>
+
+    <div class="group">
+      <h2>文件</h2>
+      <div class="row">
+        <button class="btn" id="pick-x">选择 .x 模型 (可多选)</button>
+        <input type="file" id="x-input" class="file-input" accept=".x" multiple>
+        <div class="file-tag" id="x-name">未加载</div>
+      </div>
+      <div class="row">
+        <button class="btn secondary" id="pick-tex">添加贴图 (可多选)</button>
+        <input type="file" id="tex-input" class="file-input" accept="image/*" multiple>
+        <div class="file-tag" id="tex-name">无</div>
+      </div>
+      <div class="btn-row" style="margin-top:4px">
+        <button class="btn secondary" id="undo-btn" disabled>↶ 撤销</button>
+        <button class="btn secondary" id="redo-btn" disabled>↷ 重做</button>
+        <button class="btn secondary" id="reset-view">重置视角</button>
+      </div>
+      <div class="file-tag" style="margin-top:2px">快捷键: Ctrl+Z 撤销 / Ctrl+Y 重做</div>
+    </div>
+
+    <div class="group">
+      <h2>渲染</h2>
+      <div class="toggle-row"><input type="checkbox" id="show-wire" checked><label for="show-wire">线框</label></div>
+      <div class="toggle-row"><input type="checkbox" id="show-texture" checked><label for="show-texture">贴图</label></div>
+      <div class="toggle-row"><input type="checkbox" id="show-grid" checked><label for="show-grid">网格地面</label></div>
+      <div class="toggle-row"><input type="checkbox" id="show-bbox"><label for="show-bbox">包围盒</label></div>
+      <div class="row" style="margin-top:6px">
+        <label>环境光 <span id="amb-val">0.6</span></label>
+        <input type="range" id="amb" min="0" max="1.5" step="0.05" value="0.6">
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>导出 OBJ</h2>
+      <div class="row">
+        <button class="btn" id="export-obj">导出为 .obj</button>
+      </div>
+      <div class="row">
+        <button class="btn secondary" id="export-mtl-only" disabled>导出 .mtl (随 OBJ)</button>
+      </div>
+      <div class="file-tag" id="export-status">点击导出会同时下载 .obj 与 .mtl</div>
+    </div>
+
+    <div class="group">
+      <h2>模型信息</h2>
+      <div id="info">
+        <div class="stat"><span class="k">顶点</span><span class="v" id="v-count">0</span></div>
+        <div class="stat"><span class="k">面</span><span class="v" id="f-count">0</span></div>
+        <div class="stat"><span class="k">材质</span><span class="v" id="m-count">0</span></div>
+        <div class="stat"><span class="k">子网格</span><span class="v" id="s-count">0</span></div>
+        <div class="stat"><span class="k">格式</span><span class="v" id="fmt">-</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="viewport">
+    <div id="dropzone">
+      <div style="font-size:24px">⬇</div>
+      <div>拖拽 .x 文件到此处，或点击左侧"选择 .x 模型"</div>
+    </div>
+    <div id="toast"></div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+/* ---------------- .x 文件解析器 (文本格式，token 流) ---------------- */
+// .x 文本格式结构:
+//   xof 0303txt 0032
+//   Material Name { rgba; power; specular; emissive; TextureFilename { "tex"; } }
+//   Frame Root { ... Frame Child { Mesh { verts; faces; MeshNormals{}; MeshTextureCoords{}; MeshMaterialList{} } } }
+// 数组元素的格式: 非末尾项以 ';' 后跟 ',' 结束, 末尾项以 ';;' 结束。
+// 采用 token 流方式解析, 简化对分隔符的容错处理。
+
+function tokenizeX(text) {
+  const tokens = [];
+  let i = 0;
+  const n = text.length;
+  while (i < n) {
+    const c = text[i];
+    if (c === ' ' || c === '\t' || c === '\r' || c === '\n') { i++; continue; }
+    if (c === '/' && i + 1 < n && text[i + 1] === '/') {
+      while (i < n && text[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '#') {
+      while (i < n && text[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '"') {
+      let j = i + 1;
+      while (j < n && text[j] !== '"') j++;
+      tokens.push({ t: 'str', v: text.slice(i + 1, j) });
+      i = j + 1;
+      continue;
+    }
+    if (c === '{' || c === '}' || c === ';' || c === ',') {
+      tokens.push({ t: 'sym', v: c });
+      i++;
+      continue;
+    }
+    // 数值 (支持 +/-, 小数, 科学计数)
+    const numMatch = text.slice(i).match(/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?/);
+    if (numMatch && numMatch[0].length > 0 && /[0-9]/.test(numMatch[0])) {
+      tokens.push({ t: 'num', v: parseFloat(numMatch[0]) });
+      i += numMatch[0].length;
+      continue;
+    }
+    // 标识符 (模板名 / 实例名)
+    const idMatch = text.slice(i).match(/^[A-Za-z_][A-Za-z0-9_]*/);
+    if (idMatch) {
+      tokens.push({ t: 'id', v: idMatch[0] });
+      i += idMatch[0].length;
+      continue;
+    }
+    // 未知字符, 跳过
+    i++;
+  }
+  return tokens;
+}
+
+function parseXFile(text) {
+  // 1. 头部检查
+  const headerMatch = text.match(/^xof\s*(\d+)\s*(txt|tzip|bzip|bini|bin)\s*(\d+)/i);
+  if (!headerMatch) throw new Error('不是合法的 .x 文件 (无 xof 头)');
+  const encoding = headerMatch[2].toLowerCase();
+  if (encoding !== 'txt') {
+    throw new Error(`仅支持文本格式 .x (txt)，当前为: ${encoding}。请先用 DirectX 工具转文本。`);
+  }
+
+  // 2. Tokenize
+  const tokens = tokenizeX(text);
+  let pos = 0;
+  const meshes = [];
+  const materials = [];          // 全局材质数组
+  const materialByName = new Map(); // name -> 全局 index
+
+  // 当前上下文栈
+  const meshStack = [];
+  let currentMaterial = null;
+
+  // ---- token 辅助 ----
+  function peek() { return tokens[pos]; }
+  function next() { return tokens[pos++]; }
+  function isSym(tk, s) { return tk && tk.t === 'sym' && tk.v === s; }
+  function isId(tk, s) { return tk && tk.t === 'id' && (s === undefined || tk.v === s); }
+  function isNum(tk) { return tk && tk.t === 'num'; }
+  function isStr(tk) { return tk && tk.t === 'str'; }
+
+  function expectNum() {
+    const tk = next();
+    if (!isNum(tk)) throw new Error('期望数字, 实际: ' + JSON.stringify(tk));
+    return tk.v;
+  }
+  // 贪心消费连续的 ';' 与 ',' (用于跨过数组项的分隔符/终止符)
+  function consumeSeparators() {
+    while (isSym(peek(), ';') || isSym(peek(), ',')) pos++;
+  }
+  // 跳过直到并包括匹配的 '}' (容错: 嵌套大括号)
+  function skipToCloseBrace() {
+    let depth = 1;
+    while (pos < tokens.length && depth > 0) {
+      const tk = next();
+      if (isSym(tk, '{')) depth++;
+      else if (isSym(tk, '}')) depth--;
+      if (depth === 0) return;
+    }
+  }
+
+  // ---- 数据解析 ----
+  function parseVec3Array(count) {
+    const arr = [];
+    for (let i = 0; i < count; i++) {
+      const x = expectNum(); consumeSeparators();
+      const y = expectNum(); consumeSeparators();
+      const z = expectNum(); consumeSeparators();
+      arr.push([x, y, z]);
+    }
+    return arr;
+  }
+
+  function parseMeshData(mesh) {
+    const nVerts = expectNum(); consumeSeparators();
+    mesh.vertices = parseVec3Array(nVerts);
+    const nFaces = expectNum(); consumeSeparators();
+    for (let f = 0; f < nFaces; f++) {
+      const cnt = expectNum(); consumeSeparators();
+      const indices = [];
+      for (let k = 0; k < cnt; k++) {
+        indices.push(expectNum());
+        consumeSeparators();
+      }
+      mesh.faces.push(indices);
+    }
+  }
+
+  function parseMeshNormals(mesh) {
+    const n = expectNum(); consumeSeparators();
+    mesh.normals = parseVec3Array(n);
+    // 法线块还包含法线面索引 (与 mesh faces 同结构), 此预览器直接用法线向量,
+    // 故跳过剩余内容 (让 walkBlock 容错消费至 '}')。
+  }
+
+  function parseMeshTextureCoords(mesh) {
+    const n = expectNum(); consumeSeparators();
+    const uvs = [];
+    for (let i = 0; i < n; i++) {
+      const u = expectNum(); consumeSeparators();
+      const v = expectNum(); consumeSeparators();
+      uvs.push([u, v]);
+    }
+    mesh.uvs = uvs;
+  }
+
+  function parseMaterialData(mat) {
+    // FaceColor RGBA
+    const r = expectNum(); consumeSeparators();
+    const g = expectNum(); consumeSeparators();
+    const b = expectNum(); consumeSeparators();
+    const a = expectNum(); consumeSeparators();
+    mat.color = [r, g, b, a];
+    // Power
+    mat.power = expectNum(); consumeSeparators();
+    // Specular RGB
+    const sr = expectNum(); consumeSeparators();
+    const sg = expectNum(); consumeSeparators();
+    const sb = expectNum(); consumeSeparators();
+    mat.specular = [sr, sg, sb];
+    // Emissive RGB
+    const er = expectNum(); consumeSeparators();
+    const eg = expectNum(); consumeSeparators();
+    const eb = expectNum(); consumeSeparators();
+    mat.emissive = [er, eg, eb];
+  }
+
+  function parseMeshMaterialList(mesh) {
+    const nMat = expectNum(); consumeSeparators();
+    const nFace = expectNum(); consumeSeparators();
+    const faceMats = [];
+    for (let f = 0; f < nFace; f++) {
+      faceMats.push(expectNum());
+      consumeSeparators();
+    }
+    // 收集本列表中材质的"局部 index -> 全局 index"
+    const localToGlobal = [];
+    // 读取嵌套 Material 块或 { Name } 引用
+    while (pos < tokens.length && !isSym(peek(), '}')) {
+      const tk = peek();
+      if (isId(tk, 'Material')) {
+        next(); // consume 'Material'
+        let matName = null;
+        if (isId(peek())) { matName = peek().v; next(); }
+        if (!isSym(peek(), '{')) continue;
+        next(); // consume '{'
+        const mat = { color: [1,1,1,1], power: 1, specular: [0,0,0], emissive: [0,0,0], textureFile: null };
+        const prevMat = currentMaterial;
+        currentMaterial = mat;
+        parseMaterialData(mat);
+        // 处理嵌套 TextureFilename
+        walkBlock();
+        currentMaterial = prevMat;
+        if (isSym(peek(), '}')) next();
+        materials.push(mat);
+        const idx = materials.length - 1;
+        if (matName) materialByName.set(matName, idx);
+        localToGlobal.push(idx);
+      } else if (isSym(tk, '{')) {
+        // { Name } 材质引用形式
+        next(); // consume '{'
+        if (isId(peek())) {
+          const name = peek().v;
+          next();
+          if (materialByName.has(name)) {
+            localToGlobal.push(materialByName.get(name));
+          }
+        }
+        // 跳过直到匹配的 '}'
+        skipToCloseBrace();
+      } else {
+        next(); // skip stray token
+      }
+    }
+    // 把面材质索引映射到全局 index
+    mesh.materialFaces = faceMats.map(mi => localToGlobal[mi] !== undefined ? localToGlobal[mi] : 0);
+  }
+
+  // ---- 块遍历 ----
+  function walkBlock() {
+    while (pos < tokens.length) {
+      const tk = peek();
+      if (!tk) return;
+      if (isSym(tk, '}')) return; // 块结束
+
+      if (tk.t === 'id') {
+        const name = tk.v;
+        next(); // consume name
+        // 可选的实例名 (下一个 id)
+        let instanceName = null;
+        if (isId(peek())) { instanceName = peek().v; next(); }
+        if (!isSym(peek(), '{')) {
+          // 不是块, 继续
+          continue;
+        }
+        next(); // consume '{'
+
+        if (name === 'Mesh') {
+          const mesh = { vertices: [], faces: [], normals: [], uvs: [], materialFaces: null };
+          meshStack.push(mesh);
+          parseMeshData(mesh);
+          walkBlock(); // 处理 MeshNormals/MeshTextureCoords/MeshMaterialList
+          meshStack.pop();
+          meshes.push(mesh);
+        } else if (name === 'Material') {
+          const mat = { color: [1,1,1,1], power: 1, specular: [0,0,0], emissive: [0,0,0], textureFile: null };
+          const prevMat = currentMaterial;
+          currentMaterial = mat;
+          parseMaterialData(mat);
+          walkBlock(); // 处理嵌套 TextureFilename
+          currentMaterial = prevMat;
+          materials.push(mat);
+          if (instanceName) materialByName.set(instanceName, materials.length - 1);
+        } else if (name === 'MeshNormals') {
+          if (meshStack.length) parseMeshNormals(meshStack[meshStack.length - 1]);
+          walkBlock(); // 容错: 跳过剩余数据 (如法线面索引) 直至 '}'
+        } else if (name === 'MeshTextureCoords') {
+          if (meshStack.length) parseMeshTextureCoords(meshStack[meshStack.length - 1]);
+          walkBlock();
+        } else if (name === 'MeshMaterialList') {
+          if (meshStack.length) parseMeshMaterialList(meshStack[meshStack.length - 1]);
+          walkBlock();
+        } else if (name === 'TextureFilename' || name === 'TextureFileName') {
+          // 内容为一个字符串
+          if (isStr(peek())) {
+            const s = next().v;
+            if (currentMaterial) currentMaterial.textureFile = s;
+          }
+          walkBlock(); // 容错: 跳过任何剩余内容
+        } else {
+          // 未知块 (Frame, Header, FrameTransformMatrix, ...), 递归跳过内容
+          walkBlock();
+        }
+
+        // 消费块的关闭 '}'
+        if (isSym(peek(), '}')) next();
+        continue;
+      }
+
+      // 块外的散落数据/符号, 跳过
+      next();
+    }
+  }
+
+  walkBlock();
+
+  return { meshes, materials, encoding };
+}
+
+/* ---------------- 把解析结果转成 Three.js BufferGeometry ---------------- */
+// .x 默认为左手坐标系 (DirectX)，Three.js 为右手坐标系。
+// 翻转 Z 轴 (z = -z) 即可在视觉上保持一致。
+
+function buildGeometry(parsed) {
+  // 把每个 Mesh 拆成多个子几何 (按材质分组)，便于后续按材质贴图。
+  const subMeshes = []; // { vertices:[x,y,z] (Float 数组,每 3 个一个), normals, uvs, indices, materialIndex }
+
+  parsed.meshes.forEach(mesh => {
+    if (!mesh.faces.length) return;
+
+    const verts = mesh.vertices;
+    const hasUV = mesh.uvs.length === verts.length;
+    const hasNrm = mesh.normals.length === verts.length;
+    const faceMats = mesh.materialFaces; // 每个面的材质索引
+
+    // 按材质分组面
+    const groups = new Map(); // materialIndex -> [face indices...]
+    if (faceMats && faceMats.length === mesh.faces.length) {
+      mesh.faces.forEach((face, fi) => {
+        const mi = faceMats[fi] || 0;
+        if (!groups.has(mi)) groups.set(mi, []);
+        groups.get(mi).push(fi);
+      });
+    } else {
+      groups.set(0, mesh.faces.map((_, i) => i));
+    }
+
+    groups.forEach((faceIdxList, mi) => {
+      const positions = [];
+      const normals = [];
+      const uvs = [];
+      const indices = [];
+      const vMap = new Map(); // "vIdx_uvIdx" -> localIdx
+
+      faceIdxList.forEach(fi => {
+        const face = mesh.faces[fi];
+        // 三角化多边形 (扇形)
+        for (let k = 1; k < face.length - 1; k++) {
+          const tri = [face[0], face[k], face[k + 1]];
+          tri.forEach(vi => {
+            const key = String(vi);
+            let local = vMap.get(key);
+            if (local === undefined) {
+              local = positions.length / 3;
+              const p = verts[vi];
+              positions.push(p[0], p[1], -p[2]); // 翻转 Z 转右手系
+              if (hasNrm) {
+                const n = mesh.normals[vi];
+                normals.push(n[0], n[1], -n[2]);
+              }
+              if (hasUV) {
+                const uv = mesh.uvs[vi];
+                uvs.push(uv[0], 1.0 - uv[1]); // UV 翻 V
+              }
+              vMap.set(key, local);
+            }
+            indices.push(local);
+          });
+        }
+      });
+
+      subMeshes.push({
+        positions: new Float32Array(positions),
+        normals: new Float32Array(normals),
+        uvs: new Float32Array(uvs),
+        indices: new Uint32Array(indices),
+        materialIndex: mi,
+        hasUV, hasNrm
+      });
+    });
+  });
+
+  return subMeshes;
+}
+
+/* ---------------- OBJ 导出 ---------------- */
+function exportOBJ(parsed) {
+  let obj = "# Exported from .x viewer\n";
+  let mtl = "# MTL file\n";
+  let mtlName = null;
+
+  let vOffset = 0;
+  let vtOffset = 0;
+  let vnOffset = 0;
+
+  const vLines = [];
+  const vtLines = [];
+  const vnLines = [];
+  const fLines = [];
+
+  const usedMaterials = parsed.materials || [];
+
+  // 写出材质
+  if (usedMaterials.length > 0) {
+    mtlName = "model.mtl";
+    usedMaterials.forEach((mat, i) => {
+      const name = `mat_${i}`;
+      mtl += `newmtl ${name}\n`;
+      mtl += `Ka ${mat.emissive[0]} ${mat.emissive[1]} ${mat.emissive[2]}\n`;
+      mtl += `Kd ${mat.color[0]} ${mat.color[1]} ${mat.color[2]}\n`;
+      mtl += `Ks ${mat.specular[0]} ${mat.specular[1]} ${mat.specular[2]}\n`;
+      mtl += `Ns ${mat.power || 1}\n`;
+      mtl += `d ${mat.color[3] !== undefined ? mat.color[3] : 1}\n`;
+      if (mat.textureFile) {
+        const tname = mat.textureFile.split(/[\\\/]/).pop();
+        mtl += `map_Kd ${tname}\n`;
+      }
+      mtl += "\n";
+    });
+  }
+
+  parsed.meshes.forEach(mesh => {
+    if (!mesh.faces.length) return;
+    const hasUV = mesh.uvs.length === mesh.vertices.length;
+    const hasNrm = mesh.normals.length === mesh.vertices.length;
+    const faceMats = mesh.materialFaces;
+
+    // 顶点
+    mesh.vertices.forEach(p => {
+      vLines.push(`v ${p[0]} ${p[1]} ${-p[2]}`); // 右手系
+    });
+    if (hasUV) {
+      mesh.uvs.forEach(uv => vtLines.push(`vt ${uv[0]} ${1 - uv[1]}`));
+    }
+    if (hasNrm) {
+      mesh.normals.forEach(n => vnLines.push(`vn ${n[0]} ${n[1]} ${-n[2]}`));
+    }
+
+    // 面 (三角化多边形)
+    mesh.faces.forEach((face, fi) => {
+      for (let k = 1; k < face.length - 1; k++) {
+        const a = face[0] + vOffset + 1;
+        const b = face[k] + vOffset + 1;
+        const c = face[k + 1] + vOffset + 1;
+        let line = "f";
+        if (hasUV && hasNrm) {
+          line += ` ${a}/${a - vOffset}/${a}/${a - vOffset}`; // 简化
+          // 注意: 因为顶点/uv/法线索引相同, 直接用同一索引
+          line = `f ${a}/${a}/${a} ${b}/${b}/${b} ${c}/${c}/${c}`;
+        } else if (hasUV) {
+          line = `f ${a}/${a} ${b}/${b} ${c}/${c}`;
+        } else if (hasNrm) {
+          line = `f ${a}//${a} ${b}//${b} ${c}//${c}`;
+        } else {
+          line = `f ${a} ${b} ${c}`;
+        }
+        if (faceMats && usedMaterials.length > 0) {
+          const mi = faceMats[fi] || 0;
+          fLines.push(`usemtl mat_${mi}`);
+        }
+        fLines.push(line);
+      }
+    });
+
+    vOffset += mesh.vertices.length;
+    if (hasUV) vtOffset += mesh.uvs.length;
+    if (hasNrm) vnOffset += mesh.normals.length;
+  });
+
+  obj += vLines.join("\n") + "\n";
+  if (vtLines.length) obj += vtLines.join("\n") + "\n";
+  if (vnLines.length) obj += vnLines.join("\n") + "\n";
+  obj += fLines.join("\n") + "\n";
+
+  if (mtlName) obj = `mtllib ${mtlName}\n` + obj;
+
+  return { obj, mtl, mtlName };
+}
+
+function downloadText(filename, content) {
+  // 用 Blob + objectURL 下载 (HTTPS 环境下可靠, 文件名不会被改后缀)
+  const blob = new Blob([content], { type: 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/* ---------------- Three.js 场景 ---------------- */
+const viewport = document.getElementById('viewport');
+const dropzone = document.getElementById('dropzone');
+const toast = document.getElementById('toast');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1d23);
+
+const camera = new THREE.PerspectiveCamera(50, 1, 0.01, 10000);
+camera.position.set(3, 2, 5);
+
+// WebGL 初始化 (容错: 在无 WebGL 的环境中, 解析/导出仍可用, 仅无法预览)
+let renderer = null;
+let controls = null;
+let webglFailed = false;
+try {
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  viewport.appendChild(renderer.domElement);
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+} catch (err) {
+  webglFailed = true;
+  console.warn('WebGL 初始化失败, 3D 预览不可用 (解析/导出仍可使用):', err.message);
+  const warn = document.createElement('div');
+  warn.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#ff6b6b;font-size:14px;text-align:center;padding:20px;max-width:300px;';
+  warn.innerHTML = '⚠ WebGL 不可用, 无法进行 3D 预览。<br>模型解析与 OBJ 导出仍可使用。<br>请在支持 WebGL 的浏览器中打开以查看 3D 预览。';
+  viewport.appendChild(warn);
+}
+
+// 灯光
+const ambLight = new THREE.AmbientLight(0xffffff, 0.6);
+scene.add(ambLight);
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+dirLight.position.set(5, 10, 7);
+scene.add(dirLight);
+const dirLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
+dirLight2.position.set(-5, -3, -5);
+scene.add(dirLight2);
+
+// 网格地面
+const grid = new THREE.GridHelper(20, 20, 0x4a505c, 0x2a2e37);
+scene.add(grid);
+
+let currentModel = null;     // THREE.Group
+let currentParsed = null;    // parsed object
+let bboxHelper = null;
+const textureMap = new Map(); // 文件名小写 -> Texture
+// 撤销/重做历史栈
+const history = [];
+let histIdx = -1;
+const HISTORY_MAX = 50;
+function pushHistory(state) {
+  if (histIdx < history.length - 1) history.length = histIdx + 1;
+  history.push(JSON.parse(JSON.stringify(state)));
+  if (history.length > HISTORY_MAX) history.shift(); else histIdx++;
+  updateUndoRedoBtn();
+}
+function updateUndoRedoBtn() {
+  document.getElementById('undo-btn').disabled = histIdx <= 0;
+  document.getElementById('redo-btn').disabled = histIdx >= history.length - 1;
+}
+function doUndo() {
+  if (histIdx <= 0) return;
+  histIdx--;
+  currentParsed = JSON.parse(JSON.stringify(history[histIdx]));
+  buildAndShow(currentParsed);
+  updateInfoPanel();
+  updateUndoRedoBtn();
+  showToast('已撤销');
+}
+function doRedo() {
+  if (histIdx >= history.length - 1) return;
+  histIdx++;
+  currentParsed = JSON.parse(JSON.stringify(history[histIdx]));
+  buildAndShow(currentParsed);
+  updateInfoPanel();
+  updateUndoRedoBtn();
+  showToast('已重做');
+}
+function updateInfoPanel() {
+  if (!currentParsed) {
+    document.getElementById('v-count').textContent = '0';
+    document.getElementById('f-count').textContent = '0';
+    document.getElementById('m-count').textContent = '0';
+    document.getElementById('s-count').textContent = '0';
+    document.getElementById('fmt').textContent = '-';
+    return;
+  }
+  document.getElementById('fmt').textContent = currentParsed.encoding.toUpperCase();
+  document.getElementById('v-count').textContent =
+    currentParsed.meshes.reduce((s, m) => s + m.vertices.length, 0);
+  document.getElementById('f-count').textContent =
+    currentParsed.meshes.reduce((s, m) => s + m.faces.length, 0);
+  document.getElementById('m-count').textContent = currentParsed.materials.length;
+  document.getElementById('s-count').textContent =
+    currentParsed.meshes.reduce((s, m) => s + (m.materialFaces ? new Set(m.materialFaces).size : 1), 0);
+}
+
+function resize() {
+  const w = viewport.clientWidth;
+  const h = viewport.clientHeight;
+  if (renderer) renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+function animate() {
+  requestAnimationFrame(animate);
+  if (webglFailed || !renderer || !controls) return;
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+function showToast(msg, ms = 2500) {
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), ms);
+}
+
+/* ---------------- 加载流程 ---------------- */
+function loadXFile(file) {
+  // 单文件加载 (向后兼容)
+  loadXFiles([file]);
+}
+
+function loadXFiles(files) {
+  // 读取所有文件, 解析后合并
+  const results = [];
+  let pending = files.length;
+  if (pending === 0) return;
+
+  files.forEach((file, idx) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const parsed = parseXFile(e.target.result);
+        results[idx] = { parsed, name: file.name };
+      } catch (err) {
+        console.error(err);
+        results[idx] = { error: err.message, name: file.name };
+      }
+      pending--;
+      if (pending === 0) finishLoad(results, files);
+    };
+    reader.onerror = () => {
+      results[idx] = { error: '读取失败', name: file.name };
+      pending--;
+      if (pending === 0) finishLoad(results, files);
+    };
+    reader.readAsText(file);
+  });
+}
+
+function finishLoad(results, files) {
+  const ok = results.filter(r => r && !r.error);
+  const failed = results.filter(r => r && r.error);
+  if (ok.length === 0) {
+    showToast('全部解析失败: ' + failed.map(r => r.name + '(' + r.error + ')').join(', '), 5000);
+    return;
+  }
+
+  // 合并多个模型: 把所有 meshes 和 materials 拼到一起
+  // 注意: 各模型的 materialFaces 索引需要偏移 (因为 materials 数组合并了)
+  const merged = { meshes: [], materials: [], encoding: 'txt' };
+  let matOffset = 0;
+  ok.forEach(({ parsed, name }) => {
+    parsed.meshes.forEach(mesh => {
+      // 深拷贝 mesh, 并把 materialFaces 偏移
+      const m = JSON.parse(JSON.stringify(mesh));
+      if (m.materialFaces) {
+        m.materialFaces = m.materialFaces.map(mi => mi + matOffset);
+      }
+      merged.meshes.push(m);
+    });
+    parsed.materials.forEach(mat => merged.materials.push(mat));
+    matOffset += parsed.materials.length;
+  });
+
+  currentParsed = merged;
+  buildAndShow(merged);
+  updateInfoPanel();
+  pushHistory(merged);
+  dropzone.style.display = 'none';
+
+  const names = files.map(f => f.name).join(', ');
+  const failedNames = failed.length ? ' (失败: ' + failed.map(r => r.name).join(',') + ')' : '';
+  showToast(`已加载 ${ok.length} 个模型: ${names}${failedNames}`);
+}
+
+function buildAndShow(parsed) {
+  // 清除旧模型
+  if (currentModel) {
+    scene.remove(currentModel);
+    currentModel.traverse(o => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) {
+        if (Array.isArray(o.material)) o.material.forEach(m => m.dispose());
+        else o.material.dispose();
+      }
+    });
+  }
+  if (bboxHelper) { scene.remove(bboxHelper); bboxHelper = null; }
+
+  const group = new THREE.Group();
+  const subMeshes = buildGeometry(parsed);
+  let totalVerts = 0, totalFaces = 0;
+
+  subMeshes.forEach((sub, idx) => {
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(sub.positions, 3));
+    if (sub.normals.length === sub.positions.length) {
+      geom.setAttribute('normal', new THREE.BufferAttribute(sub.normals, 3));
+    } else {
+      geom.computeVertexNormals();
+    }
+    if (sub.hasUV && sub.uvs.length === (sub.positions.length / 3) * 2) {
+      geom.setAttribute('uv', new THREE.BufferAttribute(sub.uvs, 2));
+    }
+    geom.setIndex(new THREE.BufferAttribute(sub.indices, 1));
+    geom.computeBoundingSphere();
+
+    // 材质
+    const matData = parsed.materials[sub.materialIndex];
+    let material;
+    if (matData) {
+      const color = new THREE.Color(
+        matData.color[0], matData.color[1], matData.color[2]
+      );
+      const texName = matData.textureFile
+        ? matData.textureFile.split(/[\\\/]/).pop().toLowerCase()
+        : null;
+      const tex = texName ? textureMap.get(texName) : null;
+      material = new THREE.MeshStandardMaterial({
+        color: tex ? 0xffffff : color,
+        map: tex,
+        roughness: 0.7,
+        metalness: 0.0,
+        side: THREE.DoubleSide,
+        transparent: (matData.color[3] !== undefined && matData.color[3] < 1.0)
+      });
+      if (matData.specular) {
+        material.metalness = Math.min(1, (matData.specular[0] + matData.specular[1] + matData.specular[2]) / 3);
+      }
+    } else {
+      material = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.7, side: THREE.DoubleSide });
+    }
+
+    const showWire = document.getElementById('show-wire').checked;
+    if (showWire) {
+      const wire = new THREE.WireframeGeometry(geom);
+      const wireMat = new THREE.LineBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.35 });
+      const wireMesh = new THREE.LineSegments(wire, wireMat);
+      group.add(wireMesh);
+    }
+    const mesh = new THREE.Mesh(geom, material);
+    group.add(mesh);
+
+    totalVerts += sub.positions.length / 3;
+    totalFaces += sub.indices.length / 3;
+  });
+
+  currentModel = group;
+  scene.add(group);
+  frameCamera(group);
+  dropzone.style.display = 'none';
+}
+
+function frameCamera(group) {
+  const box = new THREE.Box3().setFromObject(group);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z, 0.001);
+  const fov = camera.fov * (Math.PI / 180);
+  let dist = maxDim / (2 * Math.tan(fov / 2));
+  dist *= 1.8;
+  camera.position.set(center.x + dist * 0.5, center.y + dist * 0.4, center.z + dist);
+  camera.near = maxDim / 100;
+  camera.far = maxDim * 1000;
+  camera.updateProjectionMatrix();
+  if (controls) { controls.target.copy(center); controls.update(); }
+  // 把网格对齐到模型底部
+  grid.position.x = center.x;
+  grid.position.z = center.z;
+  grid.position.y = box.min.y;
+}
+
+/* ---------------- 贴图加载 ---------------- */
+function loadTextures(files) {
+  let loaded = 0;
+  const names = [];
+  Array.from(files).forEach(file => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const url = e.target.result;
+      const loader = new THREE.TextureLoader();
+      loader.load(url, (tex) => {
+        tex.flipY = false; // .x UV 已处理 V 翻转
+        tex.colorSpace = THREE.SRGBColorSpace;
+        textureMap.set(file.name.toLowerCase(), tex);
+        loaded++;
+        names.push(file.name);
+        document.getElementById('tex-name').textContent = names.join(', ');
+        if (currentParsed) {
+          buildAndShow(currentParsed);
+          showToast(`贴图已应用: ${file.name}`);
+        }
+      });
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ---------------- UI 绑定 ---------------- */
+document.getElementById('pick-x').addEventListener('click', () => {
+  document.getElementById('x-input').click();
+});
+document.getElementById('x-input').addEventListener('change', (e) => {
+  const files = Array.from(e.target.files);
+  if (files.length === 0) return;
+  document.getElementById('x-name').textContent = files.map(f => f.name).join(', ');
+  loadXFiles(files);
+  // 重置 input 允许重复选同一文件
+  e.target.value = '';
+});
+
+document.getElementById('pick-tex').addEventListener('click', () => {
+  document.getElementById('tex-input').click();
+});
+document.getElementById('tex-input').addEventListener('change', (e) => {
+  if (e.target.files.length === 0) return;
+  loadTextures(e.target.files);
+});
+
+document.getElementById('reset-view').addEventListener('click', () => {
+  if (currentModel) frameCamera(currentModel);
+});
+
+document.getElementById('undo-btn').addEventListener('click', doUndo);
+document.getElementById('redo-btn').addEventListener('click', doRedo);
+
+// 键盘快捷键: Ctrl+Z 撤销, Ctrl+Y / Ctrl+Shift+Z 重做
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey) {
+    if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); doUndo(); }
+    else if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) { e.preventDefault(); doRedo(); }
+  }
+});
+
+document.getElementById('show-wire').addEventListener('change', () => {
+  if (currentParsed) buildAndShow(currentParsed);
+});
+document.getElementById('show-texture').addEventListener('change', () => {
+  if (currentParsed) buildAndShow(currentParsed);
+});
+document.getElementById('show-grid').addEventListener('change', (e) => {
+  grid.visible = e.target.checked;
+});
+document.getElementById('show-bbox').addEventListener('change', (e) => {
+  if (e.target.checked && currentModel) {
+    if (bboxHelper) scene.remove(bboxHelper);
+    bboxHelper = new THREE.BoxHelper(currentModel, 0xffff00);
+    scene.add(bboxHelper);
+  } else if (bboxHelper) {
+    scene.remove(bboxHelper);
+    bboxHelper = null;
+  }
+});
+document.getElementById('amb').addEventListener('input', (e) => {
+  ambLight.intensity = parseFloat(e.target.value);
+  document.getElementById('amb-val').textContent = parseFloat(e.target.value).toFixed(2);
+});
+
+document.getElementById('export-obj').addEventListener('click', () => {
+  if (!currentParsed) {
+    showToast('请先加载 .x 模型');
+    return;
+  }
+  const { obj, mtl } = exportOBJ(currentParsed);
+  // 先下载 obj, 延迟 500ms 再下载 mtl, 避免移动端浏览器只执行最后一次下载
+  downloadText('model.obj', obj);
+  if (currentParsed.materials.length > 0) {
+    setTimeout(() => downloadText('model.mtl', mtl), 500);
+  }
+  document.getElementById('export-status').textContent =
+    `已导出 (${currentParsed.meshes.reduce((s,m)=>s+m.vertices.length,0)} v, ${currentParsed.meshes.reduce((s,m)=>s+m.faces.length,0)} f)`;
+  showToast('OBJ 已导出');
+});
+
+/* ---------------- 拖拽支持 ---------------- */
+viewport.addEventListener('dragover', (e) => {
+  e.preventDefault();
+});
+viewport.addEventListener('drop', (e) => {
+  e.preventDefault();
+  const files = Array.from(e.dataTransfer.files);
+  if (files.length === 0) return;
+  const xFiles = files.filter(f => f.name.toLowerCase().endsWith('.x'));
+  const imgFiles = files.filter(f => f.type.startsWith('image/'));
+  if (xFiles.length > 0) {
+    document.getElementById('x-name').textContent = xFiles.map(f => f.name).join(', ');
+    loadXFiles(xFiles);
+  }
+  if (imgFiles.length > 0) {
+    loadTextures(imgFiles);
+  }
+});
+
+showToast('预览器已就绪');
+</script>
+</body>
+</html>
