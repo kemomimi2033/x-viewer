@@ -70,6 +70,7 @@
         <button class="btn secondary" id="undo-btn" disabled>↶ 撤销</button>
         <button class="btn secondary" id="redo-btn" disabled>↷ 重做</button>
         <button class="btn secondary" id="reset-view">重置视角</button>
+        <button class="btn secondary" id="delete-model" disabled>🗑 删除模型</button>
       </div>
       <div class="file-tag" style="margin-top:2px">快捷键: Ctrl+Z 撤销 / Ctrl+Y 重做</div>
     </div>
@@ -665,6 +666,7 @@ function pushHistory(state) {
 function updateUndoRedoBtn() {
   document.getElementById('undo-btn').disabled = histIdx <= 0;
   document.getElementById('redo-btn').disabled = histIdx >= history.length - 1;
+  document.getElementById('delete-model').disabled = !currentParsed;
 }
 function doUndo() {
   if (histIdx <= 0) return;
@@ -790,6 +792,7 @@ function finishLoad(results, files) {
   buildAndShow(merged);
   updateInfoPanel();
   pushHistory(merged);
+  document.getElementById('delete-model').disabled = false;
   dropzone.style.display = 'none';
 
   const names = files.map(f => f.name).join(', ');
@@ -945,6 +948,37 @@ document.getElementById('tex-input').addEventListener('change', (e) => {
 
 document.getElementById('reset-view').addEventListener('click', () => {
   if (currentModel) frameCamera(currentModel);
+});
+
+document.getElementById('delete-model').addEventListener('click', () => {
+  if (!currentParsed) return;
+  // 清除场景中的模型
+  if (currentModel) {
+    scene.remove(currentModel);
+    currentModel.traverse(o => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) {
+        if (Array.isArray(o.material)) o.material.forEach(m => m.dispose());
+        else o.material.dispose();
+      }
+    });
+    currentModel = null;
+  }
+  if (bboxHelper) { scene.remove(bboxHelper); bboxHelper = null; }
+  // 清除数据和贴图
+  currentParsed = null;
+  textureMap.forEach(tex => tex.dispose());
+  textureMap.clear();
+  textureDataURLs.clear();
+  // 重置 UI
+  document.getElementById('x-name').textContent = '未加载';
+  document.getElementById('tex-name').textContent = '无';
+  document.getElementById('show-bbox').checked = false;
+  updateInfoPanel();
+  updateUndoRedoBtn();
+  document.getElementById('delete-model').disabled = true;
+  dropzone.style.display = 'flex';
+  showToast('模型已删除');
 });
 
 document.getElementById('undo-btn').addEventListener('click', doUndo);
